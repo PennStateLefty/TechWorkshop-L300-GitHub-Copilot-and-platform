@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.38.33.27573",
-      "templateHash": "11449549718336151201"
+      "templateHash": "3118338039234772034"
     }
   },
   "parameters": {
@@ -62,7 +62,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.38.33.27573",
-              "templateHash": "2494733592095311998"
+              "templateHash": "10925166500368111927"
             }
           },
           "parameters": {
@@ -82,7 +82,7 @@
           "resources": [
             {
               "type": "Microsoft.ContainerRegistry/registries",
-              "apiVersion": "2023-01-01-preview",
+              "apiVersion": "2023-07-01",
               "name": "[parameters('registryName')]",
               "location": "[parameters('location')]",
               "sku": {
@@ -101,7 +101,7 @@
             },
             "loginServer": {
               "type": "string",
-              "value": "[reference(resourceId('Microsoft.ContainerRegistry/registries', parameters('registryName')), '2023-01-01-preview').loginServer]"
+              "value": "[reference(resourceId('Microsoft.ContainerRegistry/registries', parameters('registryName')), '2023-07-01').loginServer]"
             }
           }
         }
