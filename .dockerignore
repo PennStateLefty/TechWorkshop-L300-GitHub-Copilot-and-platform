@@ -1,0 +1,39 @@
+# Git files
+.git
+.gitignore
+.github
+
+# Documentation
+*.md
+README.md
+docs/
+media/
+
+# IDE and editor files
+.vscode/
+.vs/
+*.swp
+*.swo
+*~
+
+# Build artifacts
+**/bin/
+**/obj/
+**/publish/
+
+# Infrastructure files
+infra/
+
+# Jekyll files
+Gemfile
+Gemfile.lock
+_config.yml
+index.md
+
+# Test files
+**/*Tests/
+**/*.Tests/
+
+# Temporary files
+**/.DS_Store
+**/Thumbs.db
