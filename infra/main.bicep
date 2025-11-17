@@ -1,80 +1,194 @@
-@description('The location for all resources')
-param location string = 'centralus'
+// Main Bicep template for Zava Storefront deployment to Azure
+// Orchestrates all infrastructure components for a containerized .NET application
+// on App Service with monitoring and managed identity authentication
 
-@description('The base name for all resources. A unique suffix will be appended.')
-param baseName string = 'zavastorefront'
+targetScope = 'resourceGroup'
 
-@description('The container image to deploy (e.g., zavastorefront<uniqueid>azurecr.io/zavastorefront:latest)')
-param containerImage string
+// ============================================================================
+// Parameters
+// ============================================================================
 
-@description('A unique suffix to ensure globally unique resource names')
-param uniqueSuffix string = uniqueString(resourceGroup().id)
+@description('Azure region for all resources')
+param location string = resourceGroup().location
 
-// Azure Container Registry
-module acr 'modules/container-registry.bicep' = {
-  name: 'acrDeployment'
+@description('Environment name (used for resource naming)')
+@minLength(2)
+@maxLength(8)
+param environmentName string = 'dev'
+
+@description('Name of the container registry (must be globally unique, alphanumeric only)')
+@minLength(5)
+@maxLength(50)
+param containerRegistryName string = 'zavacr${uniqueString(resourceGroup().id)}'
+
+@description('Docker image URI for the App Service (format: registryname.azurecr.io/imagename:tag)')
+param dockerImageUri string
+
+@description('App Service SKU')
+@allowed([
+  'B1'
+  'B2'
+  'B3'
+  'S1'
+  'S2'
+  'S3'
+])
+param appServiceSku string = 'B1'
+
+@description('Log Analytics retention in days')
+@minValue(7)
+@maxValue(730)
+param logRetentionInDays int = 30
+
+@description('Resource tags')
+param tags object = {
+  environment: environmentName
+  project: 'ZavaStorefront'
+  createdBy: 'bicep'
+}
+
+// ============================================================================
+// Variables
+// ============================================================================
+
+var resourceNamePrefix = 'zava${environmentName}'
+// Resource names follow Microsoft naming conventions:
+// - App Service: 1-60 chars, alphanumeric and hyphens
+// - App Service Plan: 1-40 chars, alphanumeric and hyphens  
+// - Log Analytics Workspace: 4-63 chars, alphanumeric and hyphens
+// - Application Insights: 1-255 chars (concise recommended)
+// - Managed Identity: 3-128 chars, alphanumeric, hyphens, underscores
+var appInsightsName = 'appi-${resourceNamePrefix}'
+var workspaceName = 'law-${resourceNamePrefix}'
+var appServicePlanName = 'plan-${resourceNamePrefix}'
+var appServiceName = 'app-${resourceNamePrefix}'
+var managedIdentityName = 'id-${resourceNamePrefix}'
+
+// ACR Pull role definition ID
+var acrPullRoleId = '7f951dda-4ed3-4680-a7ca-43fe172d538d'
+
+// ============================================================================
+// Resources
+// ============================================================================
+
+// Log Analytics Workspace for monitoring
+module logAnalyticsWorkspace 'modules/log-analytics-workspace.bicep' = {
+  name: 'logAnalyticsDeployment'
   params: {
     location: location
-    registryName: '${baseName}${uniqueSuffix}'
+    workspaceName: workspaceName
+    skuName: 'PerGB2018'
+    retentionInDays: logRetentionInDays
+    tags: tags
   }
 }
 
-// Managed Identity
-module identity 'modules/managed-identity.bicep' = {
-  name: 'identityDeployment'
-  params: {
-    location: location
-    identityName: 'id-${baseName}-${uniqueSuffix}'
-  }
-}
-
-// Application Insights
+// Application Insights for observability
 module appInsights 'modules/app-insights.bicep' = {
   name: 'appInsightsDeployment'
   params: {
     location: location
-    appInsightsName: 'ai-${baseName}-${uniqueSuffix}'
+    appInsightsName: appInsightsName
+    applicationType: 'web'
+    workspaceResourceId: logAnalyticsWorkspace.outputs.resourceId
+    tags: tags
   }
 }
 
-// Role Assignment - Grant managed identity acrPull role on ACR
-module roleAssignment 'modules/role-assignment.bicep' = {
-  name: 'roleAssignmentDeployment'
-  params: {
-    principalId: identity.outputs.principalId
-    acrName: acr.outputs.acrName
-  }
-}
-
-// Azure Container App Environment
-module containerAppEnv 'modules/container-app-environment.bicep' = {
-  name: 'containerAppEnvDeployment'
+// Container Registry for storing Docker images
+module containerRegistry 'modules/container-registry.bicep' = {
+  name: 'containerRegistryDeployment'
   params: {
     location: location
-    environmentName: 'cae-${baseName}-${uniqueSuffix}'
+    registryName: containerRegistryName
+    skuName: 'Basic'
+    adminUserEnabled: false
+    publicNetworkAccessEnabled: true
+    tags: tags
+  }
+}
+
+// Managed Identity for App Service authentication
+module managedIdentity 'modules/managed-identity.bicep' = {
+  name: 'managedIdentityDeployment'
+  params: {
+    location: location
+    resourceName: managedIdentityName
+    tags: tags
+  }
+}
+
+// Role Assignment: Grant App Service managed identity AcrPull permission
+module acrPullRoleAssignment 'modules/role-assignment.bicep' = {
+  name: 'acrPullRoleAssignment'
+  params: {
+    principalId: managedIdentity.outputs.principalId
+    roleDefinitionId: acrPullRoleId
+    principalType: 'ServicePrincipal'
+    scope: containerRegistry.outputs.resourceId
+  }
+}
+
+// App Service Plan (Linux) for hosting the containerized app
+module appServicePlan 'modules/app-service-plan.bicep' = {
+  name: 'appServicePlanDeployment'
+  params: {
+    location: location
+    planName: appServicePlanName
+    osType: 'Linux'
+    skuName: appServiceSku
+    tags: tags
+  }
+}
+
+// App Service hosting the containerized .NET application
+module appService 'modules/app-service.bicep' = {
+  name: 'appServiceDeployment'
+  params: {
+    location: location
+    appServiceName: appServiceName
+    appServicePlanId: appServicePlan.outputs.resourceId
+    dockerImageUri: dockerImageUri
+    dockerRegistryUrl: 'https://${containerRegistry.outputs.loginServer}'
     appInsightsConnectionString: appInsights.outputs.connectionString
-  }
-}
-
-// Azure Container App
-module containerApp 'modules/container-app.bicep' = {
-  name: 'containerAppDeployment'
-  params: {
-    location: location
-    containerAppName: 'ca-${baseName}-${uniqueSuffix}'
-    containerAppEnvironmentId: containerAppEnv.outputs.environmentId
-    containerImage: containerImage
-    managedIdentityId: identity.outputs.identityId
-    acrName: acr.outputs.acrName
+    managedIdentityResourceId: managedIdentity.outputs.resourceId
+    tags: tags
   }
   dependsOn: [
-    roleAssignment
+    acrPullRoleAssignment
   ]
 }
 
+// ============================================================================
 // Outputs
-output acrLoginServer string = acr.outputs.loginServer
-output acrName string = acr.outputs.acrName
-output containerAppUrl string = containerApp.outputs.fqdn
+// ============================================================================
+
+@description('The Application Insights instrumentation key')
+output appInsightsKey string = appInsights.outputs.instrumentationKey
+
+@description('The Application Insights connection string')
 output appInsightsConnectionString string = appInsights.outputs.connectionString
-output managedIdentityPrincipalId string = identity.outputs.principalId
+
+@description('The container registry login server')
+output containerRegistryLoginServer string = containerRegistry.outputs.loginServer
+
+@description('The App Service URL')
+output appServiceUrl string = appService.outputs.fqdn
+
+@description('The App Service hostname')
+output appServiceHostname string = appService.outputs.defaultHostName
+
+@description('The managed identity resource ID')
+output managedIdentityResourceId string = managedIdentity.outputs.resourceId
+
+@description('The managed identity principal ID')
+output managedIdentityPrincipalId string = managedIdentity.outputs.principalId
+
+@description('The Log Analytics Workspace ID')
+output logAnalyticsWorkspaceId string = logAnalyticsWorkspace.outputs.workspaceId
+
+@description('The deployment region')
+output deploymentRegion string = location
+
+@description('The environment name')
+output environmentName string = environmentName

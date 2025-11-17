@@ -1,0 +1,26 @@
+@description('The principal ID of the managed identity')
+param principalId string
+
+@description('The name of the Azure Container Registry')
+param acrName string
+
+// Reference to existing ACR
+resource containerRegistry 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {
+  name: acrName
+}
+
+// Built-in Azure role definition for AcrPull
+var acrPullRoleDefinitionId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')
+
+// Role Assignment
+resource roleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(containerRegistry.id, principalId, acrPullRoleDefinitionId)
+  scope: containerRegistry
+  properties: {
+    roleDefinitionId: acrPullRoleDefinitionId
+    principalId: principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+output roleAssignmentId string = roleAssignment.id
